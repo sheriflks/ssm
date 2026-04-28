@@ -1,33 +1,22 @@
 #!/bin/bash
-
 # ============================================================
-#   SSM - Installer Script for VPS (Fresh Install Ready)
-#   Author: sheriflks | github.com/sheriflks/ssm
+#   SSM Panel - Auto Installer
+#   Author : sheriflks | github.com/sheriflks/ssm
+#   Tested : Ubuntu 20.04 / 22.04 / 24.04, Debian 11 / 12
 # ============================================================
 
-# Jangan pakai set -euo pipefail di level global karena
-# beberapa command boleh gagal (fallback logic)
-set -uo pipefail
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
 info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-err()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+die()  { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 ask()  { echo -ne "${YELLOW}[?]${NC} $1"; }
+step() { echo -e "\n${CYAN}${BOLD}━━━ $1 ━━━${NC}"; }
 
-step() {
-  echo ""
-  echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${CYAN}${BOLD}  $1${NC}"
-  echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-}
+# ── Root ─────────────────────────────────────────────────────
+[ "$EUID" -ne 0 ] && die "Jalankan sebagai root: sudo bash install.sh"
 
 echo -e "${CYAN}${BOLD}"
 echo "  ____  ____  __  __ "
@@ -35,153 +24,138 @@ echo " / ___||  _ \|  \/  |"
 echo " \___ \| |_) | |\/| |"
 echo "  ___) |  __/| |  | |"
 echo " |____/|_|   |_|  |_|"
-echo -e "${NC}"
-echo -e "${GREEN}${BOLD}  SSM Panel - Auto Installer (Fresh VPS Ready)${NC}"
-echo "================================================"
-echo ""
-
-# ── Root check ───────────────────────────────────────────────
-[ "$EUID" -ne 0 ] && err "Jalankan sebagai root: sudo bash install.sh"
+echo -e "${NC}${GREEN}${BOLD}  SSM Panel Installer — Fresh VPS Ready${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ════════════════════════════════════════════
-# BOOTSTRAP — Install tool dasar dulu
-# (fresh VPS mungkin belum punya curl, wget, dll)
+# 0. DETEKSI OS
 # ════════════════════════════════════════════
-step "BOOTSTRAP — Persiapan sistem dasar"
-
-# Deteksi package manager
-if command -v apt-get &>/dev/null; then
-  PKG_MGR="apt-get"
-elif command -v apt &>/dev/null; then
-  PKG_MGR="apt"
-else
-  err "Package manager apt tidak ditemukan. Script ini hanya mendukung Ubuntu/Debian."
-fi
-
-# Deteksi OS
-if [ -f /etc/os-release ]; then
-  . /etc/os-release
-  OS_NAME="${ID:-unknown}"
-  OS_VER="${VERSION_ID:-unknown}"
-  OS_PRETTY="${PRETTY_NAME:-unknown}"
-else
-  err "Tidak bisa membaca /etc/os-release. Pastikan OS adalah Ubuntu/Debian."
-fi
-
-info "OS: $OS_PRETTY"
-
+[ -f /etc/os-release ] || die "Tidak bisa baca /etc/os-release"
+. /etc/os-release
+OS_NAME="${ID:-unknown}"
+info "OS: ${PRETTY_NAME:-unknown}"
 case "$OS_NAME" in
   ubuntu|debian) : ;;
-  *) err "OS '$OS_NAME' tidak didukung. Gunakan Ubuntu 20.04/22.04/24.04 atau Debian 11/12." ;;
+  *) die "OS tidak didukung. Gunakan Ubuntu 20/22/24 atau Debian 11/12." ;;
 esac
 
-# Nonaktifkan prompt interaktif apt
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 
-# Fix dpkg interrupted (kalau VPS pernah gagal install sebelumnya)
-info "Memperbaiki dpkg jika ada yang interrupted..."
-dpkg --configure -a 2>/dev/null || true
-
-# Update repo list dulu (wajib di fresh VPS)
-info "Update package list..."
-$PKG_MGR update -y 2>&1 | tail -3
-
-# Install tool bootstrap yang PASTI dibutuhkan sebelum langkah lain
-info "Install tool dasar (curl, wget, git, unzip, ca-certificates)..."
-$PKG_MGR install -y \
-  curl \
-  wget \
-  git \
-  unzip \
-  rsync \
-  gnupg \
-  ca-certificates \
-  lsb-release \
-  apt-transport-https \
-  software-properties-common \
-  net-tools \
-  psmisc \
-  iproute2 \
-  cron \
-  2>&1 | tail -5
-
-ok "Bootstrap selesai."
-
-# ── Input dari user ──────────────────────────────────────────
-step "INPUT — Konfigurasi instalasi"
-
+# ════════════════════════════════════════════
+# 1. INPUT
+# ════════════════════════════════════════════
+step "INPUT"
 ask "Domain (contoh: ssm.sherif.eu.cc): "; read -r DOMAIN
-[ -z "${DOMAIN:-}" ] && err "Domain tidak boleh kosong."
+[ -z "${DOMAIN:-}" ] && die "Domain tidak boleh kosong."
 
-ask "Direktori install (default: /var/www/html/ssm): "; read -r WEBROOT
+ask "Webroot (default: /var/www/html/ssm): "; read -r WEBROOT
 WEBROOT="${WEBROOT:-/var/www/html/ssm}"
 
 ask "Nama database (default: ssm_db): "; read -r DB_NAME
 DB_NAME="${DB_NAME:-ssm_db}"
 
-ask "Username database (default: ssm_user): "; read -r DB_USER
+ask "Username DB (default: ssm_user): "; read -r DB_USER
 DB_USER="${DB_USER:-ssm_user}"
 
-ask "Password database baru: "; read -rs DB_PASS; echo ""
-[ -z "${DB_PASS:-}" ] && err "Password database tidak boleh kosong."
+ask "Password DB baru: "; read -rs DB_PASS; echo ""
+[ -z "${DB_PASS:-}" ] && die "Password DB tidak boleh kosong."
 
-echo ""
-echo -e "${YELLOW}Password root MySQL:${NC}"
-echo -e "  - Kosongkan jika VPS fresh install (MySQL belum punya password)"
-echo -e "  - Isi jika sudah pernah set password root MySQL"
+echo -e "\n${YELLOW}Password root MySQL — kosongkan jika fresh install:${NC}"
 ask "Password root MySQL: "; read -rs MYSQL_ROOT_PASS; echo ""
 
 echo ""
-echo -e "${CYAN}${BOLD}Ringkasan konfigurasi:${NC}"
-echo "  Domain  : $DOMAIN"
-echo "  Webroot : $WEBROOT"
-echo "  DB Name : $DB_NAME"
-echo "  DB User : $DB_USER"
+echo -e "${BOLD}  Domain  : $DOMAIN"
+echo -e "  Webroot : $WEBROOT"
+echo -e "  DB Name : $DB_NAME"
+echo -e "  DB User : $DB_USER${NC}"
 echo ""
 ask "Lanjutkan? (y/n): "; read -r CONFIRM
-[[ "${CONFIRM:-n}" != "y" && "${CONFIRM:-n}" != "Y" ]] && echo -e "${RED}Dibatalkan.${NC}" && exit 0
+[[ "${CONFIRM:-n}" != "y" && "${CONFIRM:-n}" != "Y" ]] && echo "Dibatalkan." && exit 0
 
 # ════════════════════════════════════════════
-# STEP 1 — Install Apache, MySQL, PHP
+# 2. BOOTSTRAP — tool dasar
 # ════════════════════════════════════════════
-step "STEP 1/7 — Install Apache2, MySQL, PHP 8.1"
+step "BOOTSTRAP"
+dpkg --configure -a 2>/dev/null || true
+apt-get update -y 2>&1 | tail -2
+apt-get install -y --no-install-recommends \
+  curl wget git unzip rsync \
+  gnupg ca-certificates lsb-release \
+  apt-transport-https software-properties-common \
+  net-tools psmisc iproute2 cron 2>&1 | tail -3
+ok "Tool dasar siap."
 
-# Upgrade sistem
-info "Upgrade sistem..."
-$PKG_MGR upgrade -y 2>&1 | tail -3
+# ════════════════════════════════════════════
+# 3. CLEANUP — hapus semua yang bentrok
+# ════════════════════════════════════════════
+step "CLEANUP"
 
-# Tambah repo PHP Ondrej (support Ubuntu 20/22/24 & Debian 11/12)
-info "Menambahkan repository PHP Ondrej..."
+# Stop & disable service yang bentrok di port 80/443
+for svc in nginx lighttpd caddy h2o; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    warn "Menghentikan $svc yang bentrok..."
+    systemctl stop "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+  fi
+done
+
+# Kill paksa proses di port 80 dan 443
+fuser -k 80/tcp  2>/dev/null || true
+fuser -k 443/tcp 2>/dev/null || true
+sleep 1
+
+# Hapus webroot lama jika ada
+if [ -d "$WEBROOT" ] && [ -n "$(ls -A "$WEBROOT" 2>/dev/null)" ]; then
+  warn "Webroot lama ditemukan: $WEBROOT"
+  ask "Hapus webroot + database lama? (y/n): "; read -r CLEAN_CONFIRM
+  if [[ "${CLEAN_CONFIRM:-n}" == "y" || "${CLEAN_CONFIRM:-n}" == "Y" ]]; then
+    rm -rf "$WEBROOT"
+    ok "Webroot lama dihapus."
+    DROP_OLD_DB=1
+  else
+    warn "Skip cleanup, file lama akan ditimpa."
+    DROP_OLD_DB=0
+  fi
+else
+  DROP_OLD_DB=0
+fi
+
+# Hapus Apache site lama yang mungkin konflik
+rm -f /etc/apache2/sites-enabled/*.conf  2>/dev/null || true
+rm -f /etc/apache2/sites-available/ssm.conf 2>/dev/null || true
+
+ok "Cleanup selesai."
+
+# ════════════════════════════════════════════
+# 4. INSTALL PAKET
+# ════════════════════════════════════════════
+step "INSTALL PAKET"
+
+# Tambah repo PHP
 if [ "$OS_NAME" = "ubuntu" ]; then
-  LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php 2>&1 | tail -3 || \
-    warn "Gagal tambah PPA Ondrej, akan coba pakai PHP bawaan repo."
+  LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php 2>&1 | tail -2 || true
 elif [ "$OS_NAME" = "debian" ]; then
   curl -fsSL https://packages.sury.org/php/apt.gpg \
-    | gpg --dearmor -o /usr/share/keyrings/sury-php.gpg 2>/dev/null
+    | gpg --dearmor -o /usr/share/keyrings/sury-php.gpg 2>/dev/null || true
   echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
     > /etc/apt/sources.list.d/sury-php.list
 fi
+apt-get update -y 2>&1 | tail -2
 
-$PKG_MGR update -y 2>&1 | tail -3
-
-# Tentukan versi PHP terbaik yang tersedia
+# Pilih versi PHP terbaik
 PHP_VER=""
-for ver in 8.2 8.1 8.0 7.4; do
-  if $PKG_MGR show "php${ver}" &>/dev/null 2>&1; then
-    PHP_VER="$ver"
-    break
-  fi
+for v in 8.2 8.1 8.0 7.4; do
+  apt-cache show "php${v}" &>/dev/null 2>&1 && PHP_VER="$v" && break
 done
 [ -z "$PHP_VER" ] && PHP_VER="8.1"
-info "Menggunakan PHP versi: $PHP_VER"
+info "PHP versi: $PHP_VER"
 
-# Install semua paket
-info "Menginstall paket (ini mungkin butuh beberapa menit)..."
-$PKG_MGR install -y \
+apt-get install -y \
   apache2 \
   mysql-server \
   "php${PHP_VER}" \
+  "php${PHP_VER}-cli" \
   "php${PHP_VER}-mysql" \
   "php${PHP_VER}-curl" \
   "php${PHP_VER}-mbstring" \
@@ -193,57 +167,41 @@ $PKG_MGR install -y \
   "php${PHP_VER}-opcache" \
   "php${PHP_VER}-readline" \
   "libapache2-mod-php${PHP_VER}" \
-  certbot \
-  python3-certbot-apache \
-  2>&1 | tail -10
+  certbot python3-certbot-apache 2>&1 | tail -5
 
 # Set PHP default
 update-alternatives --set php "/usr/bin/php${PHP_VER}" 2>/dev/null || true
 
-# Verifikasi PHP
-PHP_INSTALLED=$(php -r "echo PHP_VERSION;" 2>/dev/null || echo "")
-[ -z "$PHP_INSTALLED" ] && err "PHP gagal diinstall. Cek koneksi internet VPS."
-ok "PHP $PHP_INSTALLED terinstall."
+# Verifikasi
+PHP_VER_INSTALLED=$(php -r "echo PHP_VERSION;" 2>/dev/null || echo "")
+[ -z "$PHP_VER_INSTALLED" ] && die "PHP gagal diinstall."
+ok "PHP $PHP_VER_INSTALLED terinstall."
 
-# Verifikasi ekstensi wajib
-info "Verifikasi PHP extensions..."
-MISSING_EXTS=""
+# Cek extension wajib
+MISS=""
 for ext in curl mbstring xml zip gd bcmath mysqli json opcache; do
-  php -m 2>/dev/null | grep -qi "^${ext}$" || MISSING_EXTS="$MISSING_EXTS $ext"
+  php -m 2>/dev/null | grep -qi "^${ext}$" || MISS="$MISS $ext"
 done
-
-if [ -n "$MISSING_EXTS" ]; then
-  warn "Extension missing:$MISSING_EXTS — mencoba install ulang..."
-  for ext in $MISSING_EXTS; do
-    $PKG_MGR install -y "php${PHP_VER}-${ext}" 2>/dev/null || \
-    $PKG_MGR install -y "php-${ext}" 2>/dev/null || \
-    warn "Tidak bisa install php-${ext}, lanjut..."
+if [ -n "$MISS" ]; then
+  warn "Extension missing:$MISS — install ulang..."
+  for ext in $MISS; do
+    apt-get install -y "php${PHP_VER}-${ext}" 2>/dev/null || \
+    apt-get install -y "php-${ext}" 2>/dev/null || true
   done
-else
-  ok "Semua PHP extensions tersedia."
 fi
+ok "PHP extensions OK."
 
 # ════════════════════════════════════════════
-# STEP 2 — Konfigurasi Apache
+# 5. KONFIGURASI APACHE
 # ════════════════════════════════════════════
-step "STEP 2/7 — Konfigurasi Apache"
+step "KONFIGURASI APACHE"
 
-# Bebaskan port 80 jika dipakai proses lain (nginx, dll)
-info "Cek port 80..."
-if ss -tlnp 2>/dev/null | grep -q ':80 ' || netstat -tlnp 2>/dev/null | grep -q ':80 '; then
-  warn "Port 80 sedang dipakai, mencoba bebaskan..."
-  # Stop nginx jika ada
-  systemctl stop nginx 2>/dev/null || true
-  systemctl disable nginx 2>/dev/null || true
-  # Kill proses lain yang pakai port 80
-  fuser -k 80/tcp 2>/dev/null || true
-  sleep 2
-  ok "Port 80 dibebaskan."
-fi
+# Aktifkan modul
+a2enmod rewrite headers ssl deflate expires php${PHP_VER} 2>&1 | grep -v "already enabled" || true
 
-a2enmod rewrite headers ssl deflate expires 2>&1 | grep -v "already enabled" || true
-
-cat > "/etc/apache2/sites-available/ssm.conf" << VHOST
+# Buat vhost
+mkdir -p "$WEBROOT"
+cat > /etc/apache2/sites-available/ssm.conf << VHOST
 <VirtualHost *:80>
     ServerName ${DOMAIN}
     DocumentRoot ${WEBROOT}
@@ -258,15 +216,6 @@ cat > "/etc/apache2/sites-available/ssm.conf" << VHOST
         AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json
     </IfModule>
 
-    <IfModule mod_expires.c>
-        ExpiresActive On
-        ExpiresByType image/jpg "access plus 1 month"
-        ExpiresByType image/jpeg "access plus 1 month"
-        ExpiresByType image/png "access plus 1 month"
-        ExpiresByType text/css "access plus 1 week"
-        ExpiresByType application/javascript "access plus 1 week"
-    </IfModule>
-
     ErrorLog \${APACHE_LOG_DIR}/ssm_error.log
     CustomLog \${APACHE_LOG_DIR}/ssm_access.log combined
 </VirtualHost>
@@ -275,34 +224,28 @@ VHOST
 a2ensite ssm.conf
 a2dissite 000-default.conf 2>/dev/null || true
 
-# Test config dulu
-apache2ctl configtest 2>&1
-if apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
-  systemctl enable apache2
-  systemctl restart apache2
-  sleep 2
-  # Verifikasi Apache benar-benar running
-  if systemctl is-active --quiet apache2; then
-    ok "Apache berjalan untuk domain ${DOMAIN}."
-  else
-    # Coba start ulang sekali lagi
-    systemctl start apache2 2>&1 || true
-    sleep 2
-    systemctl is-active --quiet apache2 && ok "Apache berjalan." || \
-      err "Apache gagal start. Cek: journalctl -xeu apache2.service"
-  fi
+# Pastikan port 80 bebas lagi sebelum start
+fuser -k 80/tcp 2>/dev/null || true
+sleep 1
+
+systemctl enable apache2
+systemctl restart apache2
+sleep 2
+
+if systemctl is-active --quiet apache2; then
+  ok "Apache running."
 else
-  err "Apache config error. Cek: apache2ctl configtest"
+  # Coba diagnosa
+  journalctl -xeu apache2.service --no-pager -n 20 2>/dev/null || true
+  die "Apache gagal start. Lihat log di atas."
 fi
 
 # ════════════════════════════════════════════
-# STEP 3 — Clone / Deploy file project
+# 6. DEPLOY FILE PROJECT
 # ════════════════════════════════════════════
-step "STEP 3/7 — Deploy file project ke ${WEBROOT}"
+step "DEPLOY FILE PROJECT"
 
-mkdir -p "$WEBROOT"
-
-# Deteksi apakah script dijalankan dari hasil clone atau curl pipe
+# Deteksi lokasi script
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "bash" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 else
@@ -313,154 +256,231 @@ info "Source : $SCRIPT_DIR"
 info "Target : $WEBROOT"
 
 if [ "$SCRIPT_DIR" = "$WEBROOT" ]; then
-  info "Script sudah berada di webroot, skip copy."
+  info "Script sudah di webroot, skip copy."
+elif [ -f "$SCRIPT_DIR/connect.php" ]; then
+  rsync -a --exclude='.git' "$SCRIPT_DIR/" "$WEBROOT/" 2>/dev/null || \
+    cp -r "$SCRIPT_DIR/." "$WEBROOT/"
+  ok "File project disalin."
 else
-  # Cek apakah source punya file project (bukan folder kosong)
-  if [ -f "$SCRIPT_DIR/connect.php" ]; then
-    rsync -a --exclude='.git' "$SCRIPT_DIR/" "$WEBROOT/" 2>/dev/null || \
-      cp -r "$SCRIPT_DIR/." "$WEBROOT/"
-    ok "File project disalin ke $WEBROOT."
-  else
-    # Fallback: clone dari GitHub
-    warn "File project tidak ditemukan di $SCRIPT_DIR."
-    info "Mencoba clone dari GitHub..."
-    if [ -d "$WEBROOT/.git" ]; then
-      git -C "$WEBROOT" pull origin main 2>&1 | tail -3
-    else
-      git clone https://github.com/sheriflks/ssm.git "$WEBROOT" 2>&1 | tail -5
-    fi
-    ok "Project di-clone dari GitHub."
-  fi
+  warn "File tidak ada di $SCRIPT_DIR, clone dari GitHub..."
+  rm -rf "$WEBROOT"
+  git clone https://github.com/sheriflks/ssm.git "$WEBROOT" 2>&1 | tail -3
+  ok "Project di-clone dari GitHub."
 fi
 
-# Set permission
+# Permission
 chown -R www-data:www-data "$WEBROOT"
 chmod -R 755 "$WEBROOT"
 [ -d "$WEBROOT/library/assets" ] && chmod -R 775 "$WEBROOT/library/assets"
-[ -f "$WEBROOT/library/shenn.log" ] && chmod 664 "$WEBROOT/library/shenn.log"
-
-ok "Permission file diset."
+[ -f "$WEBROOT/library/shenn.log" ] && chmod 664 "$WEBROOT/library/shenn.log" || true
+ok "Permission diset."
 
 # ════════════════════════════════════════════
-# STEP 4 — Setup MySQL
+# 7. SETUP MYSQL
 # ════════════════════════════════════════════
-step "STEP 4/7 — Setup MySQL"
+step "SETUP MYSQL"
 
 systemctl enable mysql
 systemctl start mysql
 
-# Tunggu MySQL siap (fresh install kadang butuh beberapa detik)
+# Tunggu MySQL ready
 info "Menunggu MySQL siap..."
-for i in $(seq 1 15); do
-  if mysqladmin ping --silent 2>/dev/null; then
-    break
-  fi
+for i in $(seq 1 20); do
+  mysqladmin ping --silent 2>/dev/null && break
   sleep 1
 done
 
-# Tentukan cara koneksi MySQL
-# Fresh Ubuntu: MySQL pakai auth_socket, tidak perlu password
+# Tentukan cara koneksi — coba semua metode
 MYSQL_CMD=""
-if mysql -u root --batch --silent -e "SELECT 1;" &>/dev/null 2>&1; then
+if mysql -u root --batch --silent -e "SELECT 1;" 2>/dev/null; then
   MYSQL_CMD="mysql -u root"
-  info "Koneksi MySQL: auth_socket (tanpa password)"
-elif [ -n "${MYSQL_ROOT_PASS:-}" ] && mysql -u root -p"${MYSQL_ROOT_PASS}" --batch --silent -e "SELECT 1;" &>/dev/null 2>&1; then
+  info "MySQL: auth_socket"
+elif [ -n "${MYSQL_ROOT_PASS:-}" ] && \
+     mysql -u root -p"${MYSQL_ROOT_PASS}" --batch --silent -e "SELECT 1;" 2>/dev/null; then
   MYSQL_CMD="mysql -u root -p${MYSQL_ROOT_PASS}"
-  info "Koneksi MySQL: password"
+  info "MySQL: password"
+elif sudo mysql -u root --batch --silent -e "SELECT 1;" 2>/dev/null; then
+  MYSQL_CMD="sudo mysql -u root"
+  info "MySQL: sudo auth_socket"
 else
-  # Coba via sudo (beberapa distro butuh ini)
-  if sudo mysql -u root --batch --silent -e "SELECT 1;" &>/dev/null 2>&1; then
-    MYSQL_CMD="sudo mysql -u root"
-    info "Koneksi MySQL: sudo auth_socket"
+  # Last resort: reset MySQL root via unix socket
+  warn "Semua metode koneksi gagal, mencoba reset MySQL root..."
+  systemctl stop mysql 2>/dev/null || true
+  mysqld_safe --skip-grant-tables --skip-networking &
+  sleep 5
+  mysql -u root --batch --silent << 'SQLINIT' 2>/dev/null || true
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED WITH auth_socket;
+SQLINIT
+  kill %1 2>/dev/null || true
+  sleep 2
+  systemctl start mysql
+  sleep 3
+  if mysql -u root --batch --silent -e "SELECT 1;" 2>/dev/null; then
+    MYSQL_CMD="mysql -u root"
   else
-    err "Tidak bisa konek ke MySQL. Coba jalankan: sudo mysql_secure_installation"
+    die "Tidak bisa konek MySQL. Jalankan manual: sudo mysql_secure_installation"
   fi
 fi
 
-# Buat database dan user
+# Drop DB lama jika diminta
+if [ "${DROP_OLD_DB:-0}" -eq 1 ]; then
+  info "Drop database lama '${DB_NAME}'..."
+  $MYSQL_CMD --batch --silent 2>/dev/null << EOF || true
+DROP DATABASE IF EXISTS \`${DB_NAME}\`;
+DROP USER IF EXISTS '${DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+  ok "Database lama dihapus."
+fi
+
+# Buat DB dan user baru
 $MYSQL_CMD --batch --silent << EOF
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
-
-[ $? -ne 0 ] && err "Gagal membuat database/user MySQL."
+[ $? -ne 0 ] && die "Gagal buat database/user MySQL."
 ok "Database '${DB_NAME}' dan user '${DB_USER}' siap."
 
 # ════════════════════════════════════════════
-# STEP 5 — Import Database.sql
+# 8. IMPORT DATABASE.SQL
 # ════════════════════════════════════════════
-step "STEP 5/7 — Import Database.sql"
+step "IMPORT DATABASE.SQL"
 
 SQL_FILE="$WEBROOT/Database.sql"
-[ ! -f "$SQL_FILE" ] && err "File Database.sql tidak ditemukan di ${WEBROOT}"
+[ ! -f "$SQL_FILE" ] && die "Database.sql tidak ditemukan di $WEBROOT"
 
-info "Mengimport Database.sql ke '${DB_NAME}'..."
+info "Import Database.sql ke '${DB_NAME}'..."
 $MYSQL_CMD --batch "${DB_NAME}" < "$SQL_FILE"
-[ $? -ne 0 ] && err "Gagal import Database.sql."
+[ $? -ne 0 ] && die "Gagal import Database.sql."
 ok "Database.sql berhasil diimport."
 
 # ════════════════════════════════════════════
-# STEP 6 — Update connect.php
+# 9. UPDATE CONNECT.PHP
 # ════════════════════════════════════════════
-step "STEP 6/7 — Update connect.php"
+step "UPDATE CONNECT.PHP"
 
 CONNECT="$WEBROOT/connect.php"
-[ ! -f "$CONNECT" ] && err "connect.php tidak ditemukan di ${WEBROOT}"
+[ ! -f "$CONNECT" ] && die "connect.php tidak ditemukan."
 
-# Escape karakter spesial untuk sed (/, &, \)
-escape_sed() { printf '%s\n' "$1" | sed -e 's/[\/&\\]/\\&/g'; }
+# Gunakan PHP langsung untuk edit — 100% aman dari karakter spesial
+php -r "
+\$file = '$CONNECT';
+\$content = file_get_contents(\$file);
+if (\$content === false) { echo 'GAGAL baca file'; exit(1); }
 
-DB_USER_ESC=$(escape_sed "$DB_USER")
-DB_PASS_ESC=$(escape_sed "$DB_PASS")
-DB_NAME_ESC=$(escape_sed "$DB_NAME")
+\$content = preg_replace(
+  \"/('host'\\s*=>\\s*')[^']*/\",
+  '\${1}localhost',
+  \$content
+);
+\$content = preg_replace(
+  \"/('user'\\s*=>\\s*')[^']*/\",
+  '\${1}" . addslashes($DB_USER) . "',
+  \$content
+);
+\$content = preg_replace(
+  \"/('pass'\\s*=>\\s*')[^']*/\",
+  '\${1}" . addslashes($DB_PASS) . "',
+  \$content
+);
+\$content = preg_replace(
+  \"/('name'\\s*=>\\s*')[^']*/\",
+  '\${1}" . addslashes($DB_NAME) . "',
+  \$content
+);
 
-sed -i "s/'host'\s*=>\s*'[^']*'/'host' => 'localhost'/" "$CONNECT"
-sed -i "s/'user'\s*=>\s*'[^']*'/'user' => '${DB_USER_ESC}'/" "$CONNECT"
-sed -i "s/'pass'\s*=>\s*'[^']*'/'pass' => '${DB_PASS_ESC}'/" "$CONNECT"
-sed -i "s/'name'\s*=>\s*'[^']*'/'name' => '${DB_NAME_ESC}'/" "$CONNECT"
+file_put_contents(\$file, \$content);
+echo 'OK';
+"
 
-# Verifikasi hasil edit
-if grep -q "'name' => '${DB_NAME_ESC}'" "$CONNECT"; then
-  ok "connect.php berhasil dikonfigurasi."
+# Verifikasi
+if grep -q "'name' => '${DB_NAME}'" "$CONNECT" 2>/dev/null; then
+  ok "connect.php dikonfigurasi dengan benar."
 else
-  warn "Verifikasi connect.php gagal, cek manual: $CONNECT"
+  # Fallback manual dengan sed
+  warn "PHP edit gagal, fallback ke sed..."
+  sed -i "s|'host'\s*=>\s*'[^']*'|'host' => 'localhost'|g" "$CONNECT"
+  sed -i "s|'user'\s*=>\s*'[^']*'|'user' => '${DB_USER}'|g" "$CONNECT"
+  sed -i "s|'pass'\s*=>\s*'[^']*'|'pass' => '${DB_PASS}'|g" "$CONNECT"
+  sed -i "s|'name'\s*=>\s*'[^']*'|'name' => '${DB_NAME}'|g" "$CONNECT"
+  ok "connect.php diupdate via sed."
+fi
+
+# Test koneksi PHP ke MySQL
+info "Test koneksi PHP → MySQL..."
+TEST_RESULT=$(php -r "
+\$c = @mysqli_connect('localhost','${DB_USER}','${DB_PASS}','${DB_NAME}');
+if(\$c) { echo 'OK'; mysqli_close(\$c); } else { echo 'FAIL:'.mysqli_connect_error(); }
+" 2>/dev/null)
+
+if [ "$TEST_RESULT" = "OK" ]; then
+  ok "Koneksi PHP → MySQL berhasil!"
+else
+  warn "Test koneksi: $TEST_RESULT"
+  warn "Cek kredensial DB di connect.php jika site error 500."
 fi
 
 # ════════════════════════════════════════════
-# STEP 7 — SSL via Certbot
+# 10. PHP CONFIG — fix error display
 # ════════════════════════════════════════════
-step "STEP 7/7 — SSL (Let's Encrypt)"
+step "PHP CONFIG"
 
-ask "Setup SSL otomatis untuk ${DOMAIN}? (y/n): "; read -r SSL_CONFIRM
+PHP_INI=$(php --ini 2>/dev/null | grep "Loaded Configuration" | awk '{print $NF}')
+if [ -f "$PHP_INI" ]; then
+  sed -i 's/^display_errors\s*=.*/display_errors = Off/' "$PHP_INI"
+  sed -i 's/^error_reporting\s*=.*/error_reporting = E_ALL \& ~E_DEPRECATED \& ~E_STRICT/' "$PHP_INI"
+  ok "PHP error display dimatikan (production mode)."
+fi
+
+# Apache PHP config
+APACHE_PHP_INI="/etc/php/${PHP_VER}/apache2/php.ini"
+if [ -f "$APACHE_PHP_INI" ]; then
+  sed -i 's/^display_errors\s*=.*/display_errors = Off/' "$APACHE_PHP_INI"
+  sed -i 's/^memory_limit\s*=.*/memory_limit = 256M/' "$APACHE_PHP_INI"
+  sed -i 's/^upload_max_filesize\s*=.*/upload_max_filesize = 64M/' "$APACHE_PHP_INI"
+  sed -i 's/^post_max_size\s*=.*/post_max_size = 64M/' "$APACHE_PHP_INI"
+  sed -i 's/^max_execution_time\s*=.*/max_execution_time = 300/' "$APACHE_PHP_INI"
+  ok "PHP Apache config dioptimasi."
+fi
+
+systemctl restart apache2
+
+# ════════════════════════════════════════════
+# 11. SSL
+# ════════════════════════════════════════════
+step "SSL (Let's Encrypt)"
+
+ask "Setup SSL untuk ${DOMAIN}? (y/n): "; read -r SSL_CONFIRM
 if [[ "${SSL_CONFIRM:-n}" == "y" || "${SSL_CONFIRM:-n}" == "Y" ]]; then
 
-  # Pastikan Apache running sebelum certbot
-  if ! systemctl is-active --quiet apache2; then
-    warn "Apache tidak running, mencoba start ulang..."
-    fuser -k 80/tcp 2>/dev/null || true
-    sleep 1
-    systemctl start apache2 2>/dev/null || true
-    sleep 2
-  fi
+  # Pastikan Apache running
+  systemctl is-active --quiet apache2 || systemctl restart apache2
 
-  # Pastikan port 80 bisa diakses dari luar (cek DNS resolve ke IP ini)
+  # Cek DNS
   SERVER_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
-              curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "unknown")
+              curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "")
   DOMAIN_IP=$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | head -1 || echo "")
 
-  if [ -n "$DOMAIN_IP" ] && [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
-    warn "DNS ${DOMAIN} mengarah ke ${DOMAIN_IP}, tapi IP VPS ini adalah ${SERVER_IP}."
-    warn "SSL tidak bisa diproses sampai DNS propagate. Skip SSL untuk sekarang."
-    warn "Jalankan manual setelah DNS propagate: certbot --apache -d ${DOMAIN}"
+  if [ -n "$DOMAIN_IP" ] && [ -n "$SERVER_IP" ] && [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
+    warn "DNS $DOMAIN → $DOMAIN_IP, IP VPS ini → $SERVER_IP"
+    warn "DNS belum propagate. SSL dilewati."
+    warn "Jalankan manual nanti: certbot --apache -d $DOMAIN"
   else
-    certbot --apache -d "$DOMAIN" --non-interactive --agree-tos -m "admin@${DOMAIN}" --redirect 2>&1
+    # Stop Apache sementara agar certbot bisa pakai port 80 standalone jika perlu
+    certbot --apache -d "$DOMAIN" \
+      --non-interactive --agree-tos \
+      -m "admin@${DOMAIN}" \
+      --redirect 2>&1
+
     if [ $? -eq 0 ]; then
       ok "SSL aktif untuk ${DOMAIN}."
+      # Update vhost HTTPS agar DocumentRoot benar
+      systemctl reload apache2
     else
-      warn "SSL gagal. Coba lagi setelah DNS propagate:"
-      warn "  certbot --apache -d ${DOMAIN}"
+      warn "SSL gagal. Coba manual: certbot --apache -d ${DOMAIN}"
     fi
   fi
 else
@@ -468,49 +488,43 @@ else
 fi
 
 # ════════════════════════════════════════════
-# BONUS — Cron Job
+# 12. CRON JOB
 # ════════════════════════════════════════════
-step "BONUS — Setup Cron Job"
+step "CRON JOB"
 
 systemctl enable cron 2>/dev/null || systemctl enable crond 2>/dev/null || true
-systemctl start cron 2>/dev/null || systemctl start crond 2>/dev/null || true
+systemctl start  cron 2>/dev/null || systemctl start  crond 2>/dev/null || true
 
-CRON_STATUS="* * * * * /usr/bin/php ${WEBROOT}/library/cron/status-socmed.php > /dev/null 2>&1"
-CRON_REFUND="* * * * * /usr/bin/php ${WEBROOT}/library/cron/refund-socmed.php > /dev/null 2>&1"
+PHP_BIN=$(which php)
+CRON_STATUS="* * * * * ${PHP_BIN} ${WEBROOT}/library/cron/status-socmed.php > /dev/null 2>&1"
+CRON_REFUND="* * * * * ${PHP_BIN} ${WEBROOT}/library/cron/refund-socmed.php > /dev/null 2>&1"
 
-# Tambah cron hanya kalau belum ada
 CURRENT_CRON=$(crontab -l 2>/dev/null || echo "")
 NEW_CRON="$CURRENT_CRON"
-echo "$CURRENT_CRON" | grep -qF "status-socmed" || NEW_CRON="${NEW_CRON}
-${CRON_STATUS}"
-echo "$CURRENT_CRON" | grep -qF "refund-socmed"  || NEW_CRON="${NEW_CRON}
-${CRON_REFUND}"
+echo "$CURRENT_CRON" | grep -qF "status-socmed" || NEW_CRON="${NEW_CRON}"$'\n'"${CRON_STATUS}"
+echo "$CURRENT_CRON" | grep -qF "refund-socmed"  || NEW_CRON="${NEW_CRON}"$'\n'"${CRON_REFUND}"
 echo "$NEW_CRON" | crontab -
-
 ok "Cron job aktif."
 
 # ════════════════════════════════════════════
 # SELESAI
 # ════════════════════════════════════════════
 echo ""
-echo -e "${GREEN}${BOLD}================================================${NC}"
+echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}${BOLD}  ✓  INSTALASI SELESAI!${NC}"
-echo -e "${GREEN}${BOLD}================================================${NC}"
+echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "  URL     : ${CYAN}https://${DOMAIN}${NC}"
 echo -e "  Webroot : ${CYAN}${WEBROOT}${NC}"
 echo -e "  DB Name : ${CYAN}${DB_NAME}${NC}"
 echo -e "  DB User : ${CYAN}${DB_USER}${NC}"
-echo -e "  PHP     : ${CYAN}$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 'unknown')${NC}"
+echo -e "  PHP     : ${CYAN}$(php -r 'echo PHP_VERSION;' 2>/dev/null)${NC}"
 echo ""
-echo -e "${YELLOW}${BOLD}  Langkah selanjutnya:${NC}"
-echo "  1. Buka https://${DOMAIN} di browser"
-echo "  2. Login panel admin, konfigurasi:"
-echo "     - SMTP (email notifikasi)"
-echo "     - Payment gateway (Paydisini, dll)"
-echo "     - Provider API (Digiflazz, dll)"
-echo "     - Firebase Cloud Messaging"
+echo -e "${YELLOW}  Langkah selanjutnya:${NC}"
+echo "  1. Buka https://${DOMAIN}"
+echo "  2. Konfigurasi di panel admin:"
+echo "     SMTP · Payment Gateway · Provider API · Firebase"
 echo ""
-echo -e "${CYAN}  Cek log jika ada error:${NC}"
+echo -e "${CYAN}  Cek error log:${NC}"
 echo "  tail -f /var/log/apache2/ssm_error.log"
 echo ""
