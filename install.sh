@@ -365,51 +365,69 @@ step "UPDATE CONNECT.PHP"
 CONNECT="$WEBROOT/connect.php"
 [ ! -f "$CONNECT" ] && die "connect.php tidak ditemukan."
 
-# Gunakan PHP langsung untuk edit — 100% aman dari karakter spesial
-php -r "
-\$file = '$CONNECT';
-\$content = file_get_contents(\$file);
-if (\$content === false) { echo 'GAGAL baca file'; exit(1); }
+# Tulis ulang blok $aiy secara langsung — paling aman, tidak bergantung regex
+# Cari baris 'host', 'user', 'pass', 'name' di dalam array $aiy dan ganti nilainya
+# Gunakan Python3 yang pasti ada di semua Ubuntu/Debian modern
+python3 << PYEOF
+import re, sys
 
-\$content = preg_replace(
-  \"/('host'\\s*=>\\s*')[^']*/\",
-  '\${1}localhost',
-  \$content
-);
-\$content = preg_replace(
-  \"/('user'\\s*=>\\s*')[^']*/\",
-  '\${1}" . addslashes($DB_USER) . "',
-  \$content
-);
-\$content = preg_replace(
-  \"/('pass'\\s*=>\\s*')[^']*/\",
-  '\${1}" . addslashes($DB_PASS) . "',
-  \$content
-);
-\$content = preg_replace(
-  \"/('name'\\s*=>\\s*')[^']*/\",
-  '\${1}" . addslashes($DB_NAME) . "',
-  \$content
-);
+filepath = '${CONNECT}'
+db_host  = 'localhost'
+db_user  = '${DB_USER}'
+db_pass  = '${DB_PASS}'
+db_name  = '${DB_NAME}'
 
-file_put_contents(\$file, \$content);
-echo 'OK';
-"
+try:
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+except Exception as e:
+    print(f"GAGAL baca: {e}", file=sys.stderr)
+    sys.exit(1)
 
-# Verifikasi
-if grep -q "'name' => '${DB_NAME}'" "$CONNECT" 2>/dev/null; then
-  ok "connect.php dikonfigurasi dengan benar."
-else
-  # Fallback manual dengan sed
-  warn "PHP edit gagal, fallback ke sed..."
-  sed -i "s|'host'\s*=>\s*'[^']*'|'host' => 'localhost'|g" "$CONNECT"
-  sed -i "s|'user'\s*=>\s*'[^']*'|'user' => '${DB_USER}'|g" "$CONNECT"
-  sed -i "s|'pass'\s*=>\s*'[^']*'|'pass' => '${DB_PASS}'|g" "$CONNECT"
-  sed -i "s|'name'\s*=>\s*'[^']*'|'name' => '${DB_NAME}'|g" "$CONNECT"
-  ok "connect.php diupdate via sed."
+# Ganti nilai dalam array \$aiy — handle komentar setelah value (# ...)
+def replace_key(content, key, value):
+    # Pattern: 'key' => 'nilai_lama' dengan optional komentar setelahnya
+    pattern = r"('" + key + r"'\s*=>\s*')[^']*(')"
+    replacement = r'\g<1>' + value + r'\g<2>'
+    new_content, n = re.subn(pattern, replacement, content)
+    if n == 0:
+        print(f"WARN: key '{key}' tidak ditemukan", file=sys.stderr)
+    return new_content
+
+content = replace_key(content, 'host', db_host)
+content = replace_key(content, 'user', db_user)
+content = replace_key(content, 'pass', db_pass)
+content = replace_key(content, 'name', db_name)
+
+try:
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("OK")
+except Exception as e:
+    print(f"GAGAL tulis: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
+if [ $? -ne 0 ]; then
+  die "Gagal update connect.php."
 fi
 
-# Test koneksi PHP ke MySQL
+# Verifikasi isi connect.php tidak rusak
+php -l "$CONNECT" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  die "connect.php syntax error setelah diedit! Cek: php -l $CONNECT"
+fi
+ok "connect.php syntax OK."
+
+# Verifikasi nilai DB sudah masuk
+if grep -q "'name' => '${DB_NAME}'" "$CONNECT"; then
+  ok "connect.php dikonfigurasi dengan benar."
+else
+  warn "Verifikasi gagal, tampilkan isi \$aiy:"
+  grep -A5 '\$aiy = \[' "$CONNECT" || true
+fi
+
+# Test koneksi PHP → MySQL
 info "Test koneksi PHP → MySQL..."
 TEST_RESULT=$(php -r "
 \$c = @mysqli_connect('localhost','${DB_USER}','${DB_PASS}','${DB_NAME}');
@@ -417,10 +435,9 @@ if(\$c) { echo 'OK'; mysqli_close(\$c); } else { echo 'FAIL:'.mysqli_connect_err
 " 2>/dev/null)
 
 if [ "$TEST_RESULT" = "OK" ]; then
-  ok "Koneksi PHP → MySQL berhasil!"
+  ok "Koneksi PHP → MySQL: BERHASIL"
 else
-  warn "Test koneksi: $TEST_RESULT"
-  warn "Cek kredensial DB di connect.php jika site error 500."
+  die "Koneksi PHP → MySQL GAGAL: $TEST_RESULT — cek DB_USER/DB_PASS/DB_NAME."
 fi
 
 # ════════════════════════════════════════════
