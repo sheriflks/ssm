@@ -1,11 +1,18 @@
-<IfModule mod_rewrite.c>
-# PHP Value #
+# PHP Settings (outside mod_rewrite for cPanel compatibility)
 php_value session.auto_start 1
+php_value memory_limit 256M
+php_value upload_max_filesize 64M
+php_value post_max_size 64M
+php_value max_execution_time 300
+php_flag display_errors Off
+
+<IfModule mod_rewrite.c>
 RewriteEngine on
 
-# FORCE HTTPS #
-RewriteCond %{HTTPS} !=on
-RewriteRule ^.*$ https://%{SERVER_NAME}%{REQUEST_URI} [R,L]
+# FORCE HTTPS — cPanel safe (no redirect loop)
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
 # Menghilangkan Ekstensi [PHP HTML] #
 RewriteCond %{REQUEST_FILENAME} !-d
@@ -138,7 +145,7 @@ RewriteCond %{HTTP_USER_AGENT} (360Spider|acapbot|acoonbot|ahrefs|alexibot|archi
 RewriteRule . - [F,L]
 
 RewriteCond %{REQUEST_URI} !(7g_log.php) [NC]    
-RewriteCond %{REMOTE_HOST} (163data|amazonaws|colocrossing|crimea|g00g1e|justhost|kanagawa|loopia|masterhost|onlinehome|poneytel|sprintdatacenter|reverse.softlayer|safenet|ttnet|woodpecker|wowrack) [NC]    
+RewriteCond %{REMOTE_HOST} (163data|colocrossing|crimea|g00g1e|kanagawa|loopia|masterhost|onlinehome|poneytel|sprintdatacenter|safenet|ttnet|woodpecker|wowrack) [NC]    
 RewriteRule . - [F,L]
 
 RewriteCond %{REQUEST_URI} !(7g_log.php) [NC]    

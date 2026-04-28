@@ -1,0 +1,23 @@
+# Credentials & config sensitif
+.env
+config.local.php
+cpanel-config.php
+
+# Log files
+*.log
+library/shenn.log
+error_log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Upload cache
+library/assets/banner/*.jpg
+library/assets/banner/*.jpeg
+library/assets/banner/*.png
+!library/assets/banner/LannJPG.jpg

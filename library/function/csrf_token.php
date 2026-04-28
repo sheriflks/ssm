@@ -2,37 +2,33 @@
 class CSRFSecure
 {
     public function __construct(){
-        if(isset($_SESSION['csrf'])) {} else {
-            if(function_exists('mcrypt_create_iv')): $_SESSION['csrf'] = bin2hex(mcrypt_create_iv(32, MCRYPT_DEV_URANDOM));
-            else: $_SESSION['csrf'] = bin2hex(openssl_random_pseudo_bytes(32));
-            endif;
+        if(!isset($_SESSION['csrf'])) {
+            $_SESSION['csrf'] = bin2hex(random_bytes(32));
         }
     }
     
-	public function generate_token(){
-		if(function_exists('mcrypt_create_iv')): $_SESSION['csrf'] = bin2hex(mcrypt_create_iv(32, MCRYPT_DEV_URANDOM));
-        else: $_SESSION['csrf'] = bin2hex(openssl_random_pseudo_bytes(32));
-        endif;
-		return $_SESSION['csrf'];
-	}
-	
-	public function show_tokenHTML(){ 
+    public function generate_token(){
+        $_SESSION['csrf'] = bin2hex(random_bytes(32));
+        return $_SESSION['csrf'];
+    }
+    
+    public function show_tokenHTML(){ 
         return '<input type="hidden" name="csrf_token" id="csrf_token" value="'.$_SESSION['csrf'].'">'; 
-	}
-	
-	public function show_tokenSTR(){ 
+    }
+    
+    public function show_tokenSTR(){ 
         return $_SESSION['csrf']; 
-	}
-	
-	public function validateToken($token){
-		if($token != $_SESSION['csrf']){
-			$this->generate_token();
-			return false;
-		} else {
-			$this->generate_token();
-			return true;
-		}
-	}
+    }
+    
+    public function validateToken($token){
+        if(!hash_equals($_SESSION['csrf'], $token)){
+            $this->generate_token();
+            return false;
+        } else {
+            $this->generate_token();
+            return true;
+        }
+    }
 }
 
 $CSRFToken = new CSRFSecure();
