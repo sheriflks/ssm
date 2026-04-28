@@ -100,6 +100,9 @@ $PKG_MGR install -y \
   lsb-release \
   apt-transport-https \
   software-properties-common \
+  net-tools \
+  psmisc \
+  iproute2 \
   cron \
   2>&1 | tail -5
 
@@ -225,8 +228,18 @@ fi
 # ════════════════════════════════════════════
 step "STEP 2/7 — Konfigurasi Apache"
 
-systemctl enable apache2
-systemctl start apache2
+# Bebaskan port 80 jika dipakai proses lain (nginx, dll)
+info "Cek port 80..."
+if ss -tlnp 2>/dev/null | grep -q ':80 ' || netstat -tlnp 2>/dev/null | grep -q ':80 '; then
+  warn "Port 80 sedang dipakai, mencoba bebaskan..."
+  # Stop nginx jika ada
+  systemctl stop nginx 2>/dev/null || true
+  systemctl disable nginx 2>/dev/null || true
+  # Kill proses lain yang pakai port 80
+  fuser -k 80/tcp 2>/dev/null || true
+  sleep 2
+  ok "Port 80 dibebaskan."
+fi
 
 a2enmod rewrite headers ssl deflate expires 2>&1 | grep -v "already enabled" || true
 
@@ -262,13 +275,24 @@ VHOST
 a2ensite ssm.conf
 a2dissite 000-default.conf 2>/dev/null || true
 
-# Test config sebelum restart
+# Test config dulu
+apache2ctl configtest 2>&1
 if apache2ctl configtest 2>&1 | grep -q "Syntax OK"; then
+  systemctl enable apache2
   systemctl restart apache2
-  ok "Apache berjalan untuk domain ${DOMAIN}."
+  sleep 2
+  # Verifikasi Apache benar-benar running
+  if systemctl is-active --quiet apache2; then
+    ok "Apache berjalan untuk domain ${DOMAIN}."
+  else
+    # Coba start ulang sekali lagi
+    systemctl start apache2 2>&1 || true
+    sleep 2
+    systemctl is-active --quiet apache2 && ok "Apache berjalan." || \
+      err "Apache gagal start. Cek: journalctl -xeu apache2.service"
+  fi
 else
-  warn "Apache config ada warning, tetap mencoba restart..."
-  systemctl restart apache2 || err "Apache gagal start. Cek: apache2ctl configtest"
+  err "Apache config error. Cek: apache2ctl configtest"
 fi
 
 # ════════════════════════════════════════════
@@ -411,12 +435,33 @@ step "STEP 7/7 — SSL (Let's Encrypt)"
 
 ask "Setup SSL otomatis untuk ${DOMAIN}? (y/n): "; read -r SSL_CONFIRM
 if [[ "${SSL_CONFIRM:-n}" == "y" || "${SSL_CONFIRM:-n}" == "Y" ]]; then
-  certbot --apache -d "$DOMAIN" --non-interactive --agree-tos -m "admin@${DOMAIN}" --redirect 2>&1
-  if [ $? -eq 0 ]; then
-    ok "SSL aktif untuk ${DOMAIN}."
+
+  # Pastikan Apache running sebelum certbot
+  if ! systemctl is-active --quiet apache2; then
+    warn "Apache tidak running, mencoba start ulang..."
+    fuser -k 80/tcp 2>/dev/null || true
+    sleep 1
+    systemctl start apache2 2>/dev/null || true
+    sleep 2
+  fi
+
+  # Pastikan port 80 bisa diakses dari luar (cek DNS resolve ke IP ini)
+  SERVER_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
+              curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "unknown")
+  DOMAIN_IP=$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | head -1 || echo "")
+
+  if [ -n "$DOMAIN_IP" ] && [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
+    warn "DNS ${DOMAIN} mengarah ke ${DOMAIN_IP}, tapi IP VPS ini adalah ${SERVER_IP}."
+    warn "SSL tidak bisa diproses sampai DNS propagate. Skip SSL untuk sekarang."
+    warn "Jalankan manual setelah DNS propagate: certbot --apache -d ${DOMAIN}"
   else
-    warn "SSL gagal. Kemungkinan DNS belum propagate ke IP VPS ini."
-    warn "Coba lagi nanti: certbot --apache -d ${DOMAIN}"
+    certbot --apache -d "$DOMAIN" --non-interactive --agree-tos -m "admin@${DOMAIN}" --redirect 2>&1
+    if [ $? -eq 0 ]; then
+      ok "SSL aktif untuk ${DOMAIN}."
+    else
+      warn "SSL gagal. Coba lagi setelah DNS propagate:"
+      warn "  certbot --apache -d ${DOMAIN}"
+    fi
   fi
 else
   warn "SSL dilewati. Aktifkan manual: certbot --apache -d ${DOMAIN}"
